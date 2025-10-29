@@ -18,3 +18,6 @@ build/
 Thumbs.db
 Desktop.ini
 
+# YouTube 댓글 추출 결과
+extract_comments/
+
