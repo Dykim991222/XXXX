@@ -21,3 +21,9 @@ Desktop.ini
 # YouTube 댓글 추출 결과
 extract_comments/
 
+# YouTube 오디오 추출 결과
+audio/
+
+# Whisper 스크립트 결과
+script/
+

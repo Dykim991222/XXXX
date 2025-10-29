@@ -6,6 +6,8 @@ from typing import List, Dict
 from datetime import datetime
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
+import yt_dlp
+import whisper
 
 # UTF-8 인코딩 설정 (Windows 콘솔에서 한글 출력)
 if sys.platform == 'win32':
@@ -167,6 +169,96 @@ def save_comments_to_file(comments: List[str], video_id: str, output_dir: Path) 
         return None
 
 
+def extract_audio(url: str, output_dir: Path) -> Path:
+    """Extract audio from YouTube video using yt-dlp."""
+    # Create output directory if it doesn't exist
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Configure yt-dlp options for audio extraction
+    # Use format that outputs common audio formats without FFmpeg
+    ydl_opts = {
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
+        'outtmpl': str(output_dir / '%(title)s.%(ext)s'),
+        'quiet': True,
+        'no_warnings': True,
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Extract info
+            info = ydl.extract_info(url, download=False)
+            title = info.get('title', 'unknown')
+            
+            print(f"\n오디오 추출 중...")
+            print(f"비디오 제목: {title}")
+            
+            # Download audio
+            ydl.download([url])
+            
+            # Find the downloaded file
+            # Look for common audio formats (m4a, webm, opus, etc.)
+            audio_extensions = ['*.m4a', '*.webm', '*.opus', '*.mp3', '*.ogg']
+            audio_files = []
+            for ext in audio_extensions:
+                audio_files.extend(list(output_dir.glob(ext)))
+            
+            if audio_files:
+                # Sort by modification time, most recent first
+                audio_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                return audio_files[0]
+            
+            return None
+            
+    except Exception as e:
+        print(f"오디오 추출 중 오류 발생: {e}")
+        print("\n참고: FFmpeg를 설치하면 MP3로 변환할 수 있습니다.")
+        print("설치 방법:")
+        print("  1. winget install ffmpeg (Windows 10/11)")
+        print("  2. https://ffmpeg.org/download.html")
+        return None
+
+
+def transcribe_audio(audio_file: Path, output_dir: Path, video_id: str) -> Path:
+    """Transcribe audio using Whisper and save to text file."""
+    if not audio_file or not audio_file.exists():
+        print("\n오디오 파일을 찾을 수 없습니다.")
+        return None
+    
+    # Create output directory
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate output filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = output_dir / f"{video_id}_{timestamp}.txt"
+    
+    try:
+        print(f"\n스크립트 생성 중 (Whisper)...")
+        print(f"이 작업은 시간이 걸릴 수 있습니다.")
+        
+        # Load Whisper model (medium model for balance of speed and accuracy)
+        model = whisper.load_model("base")
+        
+        # Transcribe audio
+        result = model.transcribe(str(audio_file), language="ko")
+        
+        # Save transcription to file
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(f"YouTube Video ID: {video_id}\n")
+            f.write(f"오디오 파일: {audio_file.name}\n")
+            f.write("=" * 80 + "\n\n")
+            f.write(result["text"])
+        
+        print(f"\n스크립트가 저장되었습니다:")
+        print(f"  파일 위치: {output_file}")
+        print(f"  파일 크기: {os.path.getsize(output_file)} bytes")
+        
+        return output_file
+        
+    except Exception as e:
+        print(f"\n스크립트 생성 중 오류 발생: {e}")
+        return None
+
+
 def main() -> int:
     """Entry point for the application."""
     load_environment()
@@ -184,7 +276,7 @@ def main() -> int:
     
     # Get YouTube URL from user
     print("=" * 60)
-    print("YouTube 댓글 추출기")
+    print("YouTube 댓글 및 오디오 추출기")
     print("=" * 60)
     print()
     print("예시 URL 형식:")
@@ -217,8 +309,8 @@ def main() -> int:
         print()
         
         # Save comments to file
-        output_dir = Path(__file__).parent.parent / "extract_comments"
-        saved_file = save_comments_to_file(comments, video_id, output_dir)
+        comments_dir = Path(__file__).parent.parent / "extract_comments"
+        saved_file = save_comments_to_file(comments, video_id, comments_dir)
         
         if saved_file:
             print(f"\n댓글이 저장되었습니다:")
@@ -227,16 +319,18 @@ def main() -> int:
         else:
             print("\n댓글 저장 중 오류가 발생했습니다.")
         
-        # Option to display comments on screen
-        print("\n콘솔에 댓글을 표시할까요? (y/n): ", end="")
-        try:
-            show_comments = input().strip().lower()
-            if show_comments == 'y' or show_comments == 'yes':
-                print("\n" + "=" * 60)
-                for i, comment in enumerate(comments, 1):
-                    safe_print(f"[{i}] {comment}\n")
-        except:
-            pass
+        # Automatically extract audio
+        audio_dir = Path(__file__).parent.parent / "audio"
+        audio_file = extract_audio(url, audio_dir)
+        
+        if audio_file:
+            print(f"\n오디오가 저장되었습니다:")
+            print(f"  파일 위치: {audio_file}")
+            print(f"  파일 크기: {os.path.getsize(audio_file)} bytes")
+        
+        # Automatically generate script from audio
+        script_dir = Path(__file__).parent.parent / "script"
+        script_file = transcribe_audio(audio_file, script_dir, video_id)
             
     except ValueError as e:
         print(f"오류: {e}")
